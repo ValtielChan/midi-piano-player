@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07080F">
+<title>MIDI Piano</title>
+<link rel="icon" href="icon.svg">
+<meta name="description" content="Lecteur MIDI avec notes qui tombent sur un clavier de piano. 100 % dans le navigateur.">
+<style>
+  :root {
+    --accent: #38BDF8; --bg: #07080F; --panel: #10121C; --sheet: #161927;
+    --muted: #9AA0B5; --label: #B4B9CC; --outline: #8E90A2;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: #fff; overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; user-select: none; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:disabled { opacity: .38; cursor: default; }
+  svg { display: block; }
+
+  #app { display: flex; flex-direction: column; height: 100%; height: 100dvh; }
+  #stage { position: relative; flex: 1; min-height: 0; }
+  #cv { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: manipulation; }
+
+  #top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px;
+    padding: 8px max(12px, env(safe-area-inset-right)) 18px max(12px, env(safe-area-inset-left));
+    background: linear-gradient(rgba(0,0,0,.75), transparent); transition: transform .25s, opacity .25s; }
+  #title { flex: 1; min-width: 0; text-align: center; font-size: 17px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status { color: var(--muted); font-size: 13px; font-weight: 400; margin-left: 8px; }
+  .hide-ui #top { transform: translateY(-100%); opacity: 0; pointer-events: none; }
+
+  #tw { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .25s, opacity .25s; }
+  .hide-ui #tw { grid-template-rows: 0fr; opacity: 0; }
+  #transport { min-height: 0; overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 6px; background: var(--panel);
+    padding: 6px max(16px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  #seekrow { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  #seek { flex: 1; min-width: 0; }
+  #dur { color: var(--muted); }
+  @media (max-width: 560px) {
+    .row { flex-wrap: wrap; justify-content: center; }
+    #seekrow { order: -1; flex-basis: 100%; }
+    #speed { position: absolute; right: 12px; }
+  }
+
+  .icon { width: 44px; height: 44px; border: 0; border-radius: 50%; background: none; display: grid; place-items: center; flex: none; }
+  .icon:not(:disabled):hover { background: rgba(255,255,255,.08); }
+  .play { width: 52px; height: 52px; background: var(--accent); color: #000; }
+  .play:not(:disabled):hover { background: var(--accent); filter: brightness(1.1); }
+  .tonal { border: 0; border-radius: 20px; padding: 10px 22px; background: #3A3B50; font-size: 15px; font-weight: 500; flex: none; }
+  .primary { border: 0; border-radius: 20px; padding: 11px 24px; background: var(--accent); color: #000; font-size: 15px; font-weight: 600; }
+  select { background: transparent; color: #fff; border: 0; font: inherit; font-size: 15px; padding: 10px 6px; cursor: pointer; }
+  select option { background: var(--sheet); }
+  input[type=range] { accent-color: var(--accent); cursor: pointer; }
+
+  #empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; padding-bottom: 20%; }
+  #empty h2 { margin: 0 0 4px; font-size: 24px; font-weight: 500; }
+  #empty p { margin: 0 0 16px; color: var(--muted); }
+  #empty button { pointer-events: auto; }
+  #empty[hidden] { display: none; }
+  .link { background: none; border: 0; margin-top: 12px; padding: 6px; color: var(--muted); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+  .link:hover { color: #fff; }
+
+  dialog { margin: auto auto 0; width: min(760px, 100vw); max-width: 100vw; max-height: 88dvh; border: 0; border-radius: 28px 28px 0 0;
+    background: var(--sheet); color: #fff; padding: 10px 24px 32px; overflow-y: auto; }
+  dialog[open] { animation: up .25s ease-out; }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  @keyframes up { from { transform: translateY(100%); } }
+  .handle { width: 32px; height: 4px; border-radius: 2px; background: #5A5D70; margin: 6px auto 16px; }
+  dialog h2 { margin: 0; font-size: 22px; font-weight: 400; }
+  .lbl { color: var(--label); font-size: 14px; font-weight: 500; margin: 18px 0 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 1px solid var(--outline); background: none; border-radius: 8px; padding: 6px 14px; font-size: 14px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px; color: #E4E4EE; }
+  .chip.on { background: #45455A; border-color: transparent; }
+  .chip.on::before { content: "✓"; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  dialog input[type=range] { width: 100%; margin: 4px 0; }
+  .sw { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; font-size: 16px; cursor: pointer; }
+  .sw input { appearance: none; -webkit-appearance: none; flex: none; width: 52px; height: 32px; border-radius: 16px; margin: 0; cursor: pointer;
+    background: #33364A; border: 2px solid var(--outline); position: relative; transition: background .2s, border-color .2s; }
+  .sw input::before { content: ""; position: absolute; top: 6px; left: 6px; width: 16px; height: 16px; border-radius: 50%; background: var(--outline); transition: all .2s; }
+  .sw input:checked { background: var(--accent); border-color: var(--accent); }
+  .sw input:checked::before { left: 22px; top: 2px; width: 24px; height: 24px; background: #1E1E3A; }
+
+  #toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); max-width: 90vw; background: #2A2D3D; padding: 10px 18px;
+    border-radius: 10px; opacity: 0; transition: opacity .3s; pointer-events: none; text-align: center; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="empty">
+      <h2>Aucun morceau</h2>
+      <p>Choisis un fichier MIDI (ou glisse-le ici)</p>
+      <button class="primary" data-open>Ouvrir un fichier MIDI</button>
+      <button class="link" id="demo">ou essayer la démo : Bach, Prélude en do majeur</button>
+    </div>
+    <header id="top">
+      <button class="tonal" data-open>Ouvrir</button>
+      <div id="title"><span id="name"></span><span id="status"></span></div>
+      <button class="icon" id="fs" title="Plein écran (F)">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+      <button class="icon" id="gear" title="Réglages">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87a.47.47 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.47.47 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+      </button>
+    </header>
+  </div>
+  <div id="tw"><div id="transport"><div class="row">
+    <button class="icon" id="rewind" title="Revenir au début (Début)" disabled>
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="#fff"><rect x="1.6" y="0" width="3.6" height="20" rx="1"/><path d="M19 0 6.4 10 19 20z"/></svg>
+    </button>
+    <button class="icon play" id="play" title="Lecture / pause (Espace)" disabled>
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="#000" id="ico-play"><path d="M4.8 0 22 11 4.8 22z"/></svg>
+      <svg width="22" height="22" viewBox="0 0 22 22" fill="#000" id="ico-pause" style="display:none"><rect x="3" width="6" height="22" rx="1.3"/><rect x="13" width="6" height="22" rx="1.3"/></svg>
+    </button>
+    <button class="icon" id="stop" title="Stop" disabled>
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="#fff"><rect x="1.8" y="1.8" width="14.4" height="14.4" rx="2.5"/></svg>
+    </button>
+    <div id="seekrow"><span id="time">0:00</span><input type="range" id="seek" min="0" max="1" step="any" value="0" disabled><span id="dur">0:00</span></div>
+    <select id="speed" title="Vitesse">
+      <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1.0×</option>
+      <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2.0×</option>
+    </select>
+  </div></div></div>
+</div>
+
+<dialog id="settings">
+  <div class="handle"></div>
+  <h2>Réglages</h2>
+  <div class="lbl">Clavier</div>
+  <div class="chips" data-key="keyboardPreset"></div>
+  <div class="lbl" id="l-window"></div>
+  <input type="range" data-key="windowSec" min="1" max="8" step="0.1">
+  <div class="lbl" id="l-kb"></div>
+  <input type="range" data-key="keyboardFrac" min="0.15" max="0.45" step="0.01">
+  <div class="lbl">Couleurs (main droite / main gauche)</div>
+  <div class="chips" data-key="palette"></div>
+  <div class="lbl">Séparation des mains</div>
+  <div class="chips" data-key="handMode"></div>
+  <div id="split-box">
+    <div class="lbl" id="l-split"></div>
+    <input type="range" data-key="splitNote" min="36" max="84" step="1">
+  </div>
+  <label class="sw">Inverser les mains <input type="checkbox" data-key="swapHands"></label>
+  <div class="lbl">Nom sur les notes qui tombent</div>
+  <div class="chips" data-key="noteNames"></div>
+  <label class="sw"><span id="l-labels"></span> <input type="checkbox" data-key="showLabels"></label>
+</dialog>
+
+<input type="file" id="file" accept=".mid,.midi,.kar,audio/midi,audio/x-midi" hidden>
+<div id="toast"></div>
+
+<script src="midi.js"></script>
+<script src="audio.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
